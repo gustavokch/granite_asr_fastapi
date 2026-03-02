@@ -75,8 +75,16 @@ def _assert_valid_segments(
         assert seg.end <= result.audio_duration_s + duration_tolerance, (
             f"end ({seg.end}) exceeds duration ({result.audio_duration_s}) + tolerance"
         )
-        assert seg.speaker == "Speaker 0", f"Unexpected speaker: {seg.speaker}"
+        assert seg.speaker.startswith("SPEAKER_") or seg.speaker == "Speaker 0", f"Unexpected speaker: {seg.speaker}"
         assert seg.confidence is None, f"Granite should not produce confidence, got {seg.confidence}"
+        
+        # Check words if present
+        if seg.words:
+            for word in seg.words:
+                assert word.word.strip(), "Word text must be non-empty"
+                assert word.start >= 0
+                assert word.end >= word.start
+                assert word.speaker.startswith("SPEAKER_") or word.speaker == "Speaker 0"
 
 
 ResultOrError = Union[granite_asr.TranscriptionResult, Exception]

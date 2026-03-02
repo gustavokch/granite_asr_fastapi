@@ -12,6 +12,13 @@ class GraniteSettings(BaseSettings):
     TORCH_DTYPE: str = "float16"  # "float16" | "bfloat16" | "float32"
     MODEL_CACHE_DIR: str | None = None
 
+    # Alignment
+    ALIGN_MODEL_ID: str = "alinerodrigues/wav2vec2-large-xlsr-grosman-53-words-phoneme-exp-1-v17"
+    
+    # Diarization
+    DIARIZATION_MODEL_ID: str = "pyannote/speaker-diarization-3.1"
+    HF_TOKEN: str | None = None
+
     # Inference
     MAX_NEW_TOKENS: int = 512
     DEFAULT_LANGUAGE: str = "pt-BR"

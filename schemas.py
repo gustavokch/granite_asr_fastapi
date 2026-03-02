@@ -4,6 +4,17 @@ from dataclasses import dataclass
 
 
 @dataclass
+class WordSegment:
+    """A single word with timestamps and speaker information."""
+
+    word: str
+    start: float
+    end: float
+    speaker: str = "Speaker 0"
+    score: float | None = None
+
+
+@dataclass
 class Segment:
     """A single transcription segment with timestamps."""
 
@@ -12,6 +23,7 @@ class Segment:
     text: str
     speaker: str = "Speaker 0"
     confidence: float | None = None  # Granite does not produce confidence scores
+    words: list[WordSegment] | None = None
 
 
 @dataclass

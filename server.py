@@ -33,12 +33,21 @@ class TranscribeRequest(BaseModel):
     language: str = Field(default="pt-BR")
 
 
+class WordResponse(BaseModel):
+    word: str
+    start: float
+    end: float
+    speaker: str = "Speaker 0"
+    score: float | None = None
+
+
 class SegmentResponse(BaseModel):
     start: float
     end: float
     text: str
     speaker: str = "Speaker 0"
     confidence: float | None = None
+    words: list[WordResponse] | None = None
 
 
 class TranscribeResponse(BaseModel):
@@ -61,14 +70,32 @@ class HealthResponse(BaseModel):
 
 def _build_response(result) -> TranscribeResponse:
     """Build a TranscribeResponse from a TranscriptionResult."""
-    return TranscribeResponse(
-        segments=[
+    segments = []
+    for s in result.segments:
+        words = None
+        if s.words:
+            words = [
+                WordResponse(
+                    word=w.word,
+                    start=w.start,
+                    end=w.end,
+                    speaker=w.speaker,
+                    score=w.score,
+                )
+                for w in s.words
+            ]
+        segments.append(
             SegmentResponse(
-                start=s.start, end=s.end, text=s.text,
-                speaker=s.speaker, confidence=s.confidence,
+                start=s.start,
+                end=s.end,
+                text=s.text,
+                speaker=s.speaker,
+                confidence=s.confidence,
+                words=words,
             )
-            for s in result.segments
-        ],
+        )
+    return TranscribeResponse(
+        segments=segments,
         window_start_s=result.window_start_s,
         audio_duration_s=result.audio_duration_s,
     )

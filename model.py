@@ -22,53 +22,92 @@ _lock = threading.Lock()
 _processor: AutoProcessor | None = None
 _model: AutoModelForSpeechSeq2Seq | None = None
 
+# New models
+_align_model: torch.nn.Module | None = None
+_align_dictionary: dict | None = None
+_diarize_pipeline: object | None = None
+_vad_pipeline: object | None = None
+
 
 def load_model() -> None:
-    """Load the Granite Speech model and processor into memory.
+    """Load the Granite Speech model and other pipelines into memory.
 
-    Blocks until fully loaded (~30-60s on CPU cold start).
-    Safe to call multiple times — subsequent calls are no-ops.
+    Blocks until fully loaded. Safe to call multiple times.
     """
-    global _processor, _model
+    global _processor, _model, _align_model, _align_dictionary, _diarize_pipeline, _vad_pipeline
 
     with _lock:
-        if _processor is not None and _model is not None:
-            return
-
         settings = get_settings()
 
-        dtype_map = {
-            "float16": torch.float16,
-            "bfloat16": torch.bfloat16,
-            "float32": torch.float32,
-        }
-        torch_dtype = dtype_map.get(settings.TORCH_DTYPE, torch.float16)
+        # Load Granite ASR
+        if _processor is None or _model is None:
+            dtype_map = {
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+                "float32": torch.float32,
+            }
+            torch_dtype = dtype_map.get(settings.TORCH_DTYPE, torch.float16)
 
-        logger.info(
-            "Loading Granite Speech model: %s (device=%s, dtype=%s)",
-            settings.MODEL_ID,
-            settings.DEVICE,
-            settings.TORCH_DTYPE,
-        )
+            logger.info(
+                "Loading Granite Speech model: %s (device=%s, dtype=%s)",
+                settings.MODEL_ID,
+                settings.DEVICE,
+                settings.TORCH_DTYPE,
+            )
 
-        kwargs = {}
-        if settings.MODEL_CACHE_DIR:
-            kwargs["cache_dir"] = settings.MODEL_CACHE_DIR
+            kwargs = {}
+            if settings.MODEL_CACHE_DIR:
+                kwargs["cache_dir"] = settings.MODEL_CACHE_DIR
 
-        _processor = AutoProcessor.from_pretrained(settings.MODEL_ID, **kwargs)
-        _model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            settings.MODEL_ID,
-            device_map=settings.DEVICE,
-            torch_dtype=torch_dtype,
-            **kwargs,
-        )
-        # Switch to evaluation mode (disables dropout/batchnorm training behavior)
-        _model.train(False)
-        logger.info("Granite Speech model loaded successfully")
+            _processor = AutoProcessor.from_pretrained(settings.MODEL_ID, **kwargs)
+            _model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                settings.MODEL_ID,
+                device_map=settings.DEVICE,
+                torch_dtype=torch_dtype,
+                **kwargs,
+            )
+            _model.train(False)
+            logger.info("Granite Speech model loaded successfully")
+
+        # Load Alignment model
+        if _align_model is None:
+            from .alignment import load_align_model as _load_align
+
+            logger.info("Loading alignment model: %s", settings.ALIGN_MODEL_ID)
+            _align_model, _align_dictionary = _load_align(
+                settings.ALIGN_MODEL_ID, settings.DEVICE
+            )
+            logger.info("Alignment model loaded successfully")
+
+        # Load Diarization pipeline
+        if _diarize_pipeline is None:
+            from .diarization import DiarizationPipeline
+
+            logger.info("Loading diarization model: %s", settings.DIARIZATION_MODEL_ID)
+            _diarize_pipeline = DiarizationPipeline(
+                settings.DIARIZATION_MODEL_ID,
+                use_auth_token=settings.HF_TOKEN,
+                device=settings.DEVICE,
+            )
+            logger.info("Diarization model loaded successfully")
+
+        # Load VAD pipeline
+        if _vad_pipeline is None:
+            from .vad import VADPipeline
+
+            logger.info("Loading VAD model (Silero)")
+            _vad_pipeline = VADPipeline(device=settings.DEVICE)
+            logger.info("VAD model loaded successfully")
 
 
 def is_loaded() -> bool:
-    return _processor is not None and _model is not None
+    return (
+        _processor is not None
+        and _model is not None
+        and _align_model is not None
+        and _diarize_pipeline is not None
+        and _vad_pipeline is not None
+    )
 
 
 def _build_prompt(language: str) -> str:
@@ -153,3 +192,54 @@ def run_inference(
         ).strip()
 
     return text, audio_duration_s
+
+
+def run_alignment(text: str, waveform: np.ndarray) -> list:
+    """Run forced alignment on a waveform.
+
+    Args:
+        text: Transcription text.
+        waveform: Mono float32 numpy array at 16kHz.
+    """
+    if not is_loaded():
+        raise RuntimeError("Model not loaded. Call load_model() first.")
+
+    from .alignment import align
+
+    settings = get_settings()
+    wav_tensor = torch.from_numpy(waveform).unsqueeze(0)  # (1, T)
+
+    with _lock:
+        return align(
+            text,
+            wav_tensor,
+            _align_model,  # type: ignore
+            _align_dictionary,  # type: ignore
+            settings.DEVICE,
+        )
+
+
+def run_diarization(waveform: np.ndarray) -> pd.DataFrame:
+    """Run diarization on a waveform.
+
+    Args:
+        waveform: Mono float32 numpy array at 16kHz.
+    """
+    if not is_loaded():
+        raise RuntimeError("Model not loaded. Call load_model() first.")
+
+    with _lock:
+        return _diarize_pipeline(waveform)  # type: ignore
+
+
+def run_vad(waveform: np.ndarray) -> list:
+    """Run VAD on a waveform.
+
+    Args:
+        waveform: Mono float32 numpy array at 16kHz.
+    """
+    if not is_loaded():
+        raise RuntimeError("Model not loaded. Call load_model() first.")
+
+    with _lock:
+        return _vad_pipeline(waveform)  # type: ignore
