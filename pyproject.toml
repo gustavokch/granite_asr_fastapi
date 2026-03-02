@@ -1,0 +1,2 @@
+[tool.pytest.ini_options]
+markers = ["slow: tests requiring model loading (~6GB RAM, 30-60s startup)"]
