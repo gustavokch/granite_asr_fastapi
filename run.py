@@ -8,6 +8,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -37,6 +38,23 @@ def main():
         help="Enable speaker diarization (requires HF_TOKEN env var)",
     )
     parser.add_argument(
+        "--compile", "-c",
+        action="store_true",
+        help="Enable torch.compile optimization (faster inference, slower startup)",
+    )
+    parser.add_argument(
+        "--batch-size", "-b",
+        type=int,
+        default=None,
+        help="Batch size for inference (default: env var or 1)",
+    )
+    parser.add_argument(
+        "--max-tokens", "-t",
+        type=int,
+        default=None,
+        help="Max new tokens to generate (default: env var or 2048)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose (debug) logging",
@@ -47,6 +65,15 @@ def main():
         help="Output full JSON result instead of text",
     )
     args = parser.parse_args()
+
+    # Apply settings via env vars before loading model
+    # Note: These only work if get_settings() hasn't been called/cached yet.
+    if args.compile:
+        os.environ["GRANITE_USE_COMPILE"] = "true"
+    if args.batch_size:
+        os.environ["GRANITE_BATCH_SIZE"] = str(args.batch_size)
+    if args.max_tokens:
+        os.environ["GRANITE_MAX_NEW_TOKENS"] = str(args.max_tokens)
 
     # Configure logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
