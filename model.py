@@ -7,6 +7,7 @@ serializes all model and processor access.
 
 import logging
 import threading
+import time
 
 import numpy as np
 import torch
@@ -39,6 +40,15 @@ def load_model() -> None:
 
     with _lock:
         settings = get_settings()
+
+        # Optimize CPU threads if applicable
+        if settings.DEVICE == "cpu":
+            import os
+            # Use around half of available cores for PyTorch to avoid contention
+            cores = os.cpu_count() or 4
+            threads = max(1, cores // 2)
+            torch.set_num_threads(threads)
+            logger.info("CPU optimization: set torch.set_num_threads(%d)", threads)
 
         # Load Granite ASR
         if _processor is None or _model is None:
@@ -171,6 +181,7 @@ def run_inference(
         wav_tensor = torch.from_numpy(waveform).unsqueeze(0)  # (1, T)
 
         logger.debug("Running model generate...")
+        start_time = time.time()
         with torch.inference_mode():
             inputs = _processor(  # type: ignore[misc]
                 prompt_str,
@@ -186,6 +197,9 @@ def run_inference(
                 do_sample=False,
                 num_beams=1,
             )
+        
+        gen_time = time.time() - start_time
+        logger.debug("Model generate complete in %.2fs", gen_time)
 
         num_input_tokens = inputs["input_ids"].shape[-1]
         new_token_ids = output_ids[0, num_input_tokens:]
@@ -194,8 +208,7 @@ def run_inference(
             skip_special_tokens=True,
             add_special_tokens=False,
         ).strip()
-        logger.debug("Model generate complete")
-
+    
     return text, audio_duration_s
 
 
