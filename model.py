@@ -10,6 +10,7 @@ import threading
 
 import numpy as np
 import torch
+import pandas as pd
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 from .config import get_settings
@@ -86,7 +87,7 @@ def load_model() -> None:
             logger.info("Loading diarization model: %s", settings.DIARIZATION_MODEL_ID)
             _diarize_pipeline = DiarizationPipeline(
                 settings.DIARIZATION_MODEL_ID,
-                use_auth_token=settings.HF_TOKEN,
+                token=settings.HF_TOKEN,
                 device=settings.DEVICE,
             )
             logger.info("Diarization model loaded successfully")

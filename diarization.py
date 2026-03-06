@@ -16,10 +16,10 @@ class DiarizationPipeline:
     def __init__(
         self,
         model_id: str = "pyannote/speaker-diarization-3.1",
-        use_auth_token: Optional[str] = None,
+        token: Optional[str] = None,
         device: str = "cpu",
     ):
-        self.model = Pipeline.from_pretrained(model_id, use_auth_token=use_auth_token)
+        self.model = Pipeline.from_pretrained(model_id, token=token)
         if self.model is not None:
             self.model.to(torch.device(device))
 

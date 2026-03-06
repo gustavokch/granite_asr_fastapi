@@ -6,6 +6,9 @@ Self-contained Python module for speech transcription using [IBM Granite Speech 
 
 - **Batch transcription** — transcribe complete audio files in a single pass
 - **Live (cumulative) transcription** — poll-based streaming with silence-based context reset to keep inference windows bounded on CPU
+- **Speaker Diarization** — separates speakers using `pyannote/speaker-diarization-3.1`
+- **Forced Alignment** — generates word-level timestamps using `wav2vec2`
+- **VAD (Voice Activity Detection)** — filters non-speech regions using `silero-vad`
 - **RMS silence detection** — automatically finds speaker pauses (>=1s) and trims the transcription window, preventing unbounded inference growth during long recordings
 - **Multi-format audio** — WAV, OGG/Opus, FLAC, MP3 via torchaudio backends; auto-resampling to 16kHz mono
 - **Thread-safe inference** — all model access serialized under a single lock
@@ -16,6 +19,7 @@ Self-contained Python module for speech transcription using [IBM Granite Speech 
 
 - Python 3.10+
 - ~6 GB RAM for FP16 model on CPU
+- Hugging Face Token (for diarization model access)
 
 Install dependencies:
 
@@ -31,6 +35,13 @@ The default `requirements.txt` pulls CPU-only PyTorch wheels. For CUDA support, 
 
 ## Quick Start
 
+### CLI Interface
+
+```bash
+export HF_TOKEN=your_token_here
+python -m granite_asr.run audio.wav --diarize
+```
+
 ### As a Python library
 
 ```python
@@ -42,7 +53,9 @@ granite_asr.load_model()
 # Batch transcription from file
 result = granite_asr.transcribe("recording.wav", language="pt-BR")
 for seg in result.segments:
-    print(f"[{seg.start:.1f}s - {seg.end:.1f}s] {seg.text}")
+    print(f"[{seg.start:.1f}s - {seg.end:.1f}s] {seg.speaker}: {seg.text}")
+    for word in seg.words:
+        print(f"  {word.start:.2f}s: {word.word}")
 
 # Batch transcription from bytes
 with open("recording.ogg", "rb") as f:
@@ -190,6 +203,14 @@ All settings use Pydantic `BaseSettings` with the `GRANITE_` environment variabl
 | `GRANITE_SILENCE_MIN_DURATION_S` | `1.0` | Minimum silence duration (seconds) |
 | `GRANITE_SILENCE_FRAME_DURATION_S` | `0.02` | RMS frame size (seconds) |
 
+### Diarization settings
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `GRANITE_DIARIZATION_MODEL_ID` | `pyannote/speaker-diarization-3.1` | Pyannote model identifier |
+| `GRANITE_HF_TOKEN` | _(none)_ | HuggingFace access token (required for diarization) |
+| `GRANITE_ALIGN_MODEL_ID` | `alinerodrigues/...` | Alignment model identifier |
+
 ### Server settings
 
 | Env var | Default | Description |
@@ -218,16 +239,22 @@ Other language codes fall back to the `pt-BR` instruction.
 granite_asr/
 ├── __init__.py       # Public API with lazy imports
 ├── model.py          # Model loading + thread-safe inference
+├── diarization.py    # Speaker diarization via pyannote
+├── alignment.py      # Forced alignment via wav2vec2
+├── vad.py            # Voice Activity Detection via Silero
 ├── silence.py        # RMS silence detection + window extraction
 ├── audio.py          # Audio decoding via torchaudio (format conversion, resampling)
 ├── config.py         # GraniteSettings (Pydantic BaseSettings, GRANITE_ prefix)
-├── schemas.py        # Segment, TranscriptionResult dataclasses
+├── schemas.py        # Segment, TranscriptionResult, WordSegment dataclasses
 ├── server.py         # FastAPI microservice wrapper
+├── run.py            # Command-line interface
 ├── requirements.txt  # Python dependencies (CPU PyTorch by default)
 └── tests/
     ├── conftest.py
-    ├── test_silence.py   # 14 tests for RMS computation, silence detection, window extraction
-    └── test_audio.py     # 4 tests for audio decoding (skipped without torchaudio)
+    ├── test_diarization.py
+    ├── test_alignment.py
+    ├── test_silence.py
+    └── test_audio.py
 ```
 
 ### Thread safety
@@ -295,7 +322,6 @@ Test coverage:
 
 ## Limitations
 
-- **No diarization** — all segments are attributed to `"Speaker 0"`. Use Deepgram for multi-speaker separation.
 - **No confidence scores** — the `confidence` field is always `None`.
 - **Greedy decoding** — uses `do_sample=False, num_beams=1` for deterministic, fast output.
 - **Max 512 tokens** — very long audio segments may produce truncated transcriptions.
