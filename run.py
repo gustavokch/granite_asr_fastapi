@@ -37,12 +37,21 @@ def main():
         help="Enable speaker diarization (requires HF_TOKEN env var)",
     )
     parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose (debug) logging",
+    )
+    parser.add_argument(
         "--json", "-j",
         action="store_true",
         help="Output full JSON result instead of text",
     )
     args = parser.parse_args()
 
+    # Configure logging
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.getLogger("granite_asr").setLevel(log_level)
+    
     if not args.audio_path.exists():
         print(f"Error: File not found: {args.audio_path}", file=sys.stderr)
         sys.exit(1)

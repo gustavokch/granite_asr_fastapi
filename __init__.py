@@ -67,34 +67,35 @@ def transcribe(
     settings = get_settings()
     lang = language or settings.DEFAULT_LANGUAGE
 
+    logger.debug("Decoding audio...")
     if isinstance(audio, (str, Path)):
         waveform = decode_audio_file(str(audio))
     else:
         waveform = decode_audio_bytes(audio)
 
     full_duration = len(waveform) / SAMPLE_RATE
+    logger.debug("Audio duration: %.2fs", full_duration)
 
     # 1. VAD
+    logger.debug("Running VAD...")
     speech_segments = run_vad(waveform)
+    logger.debug("VAD detected %d segments", len(speech_segments))
     if not speech_segments:
         # Fall back to whole audio if no speech detected by VAD
         speech_segments = [{"start": 0.0, "end": full_duration}]
 
     # 2. Transcribe speech segments
-    # Note: For batch, we could concatenate speech segments or process them individually.
-    # To keep it simple and consistent with WhisperX, we'll process the whole thing
-    # but only on segments if needed.
-    # Actually, let's just run Granite on the whole waveform first as a single segment.
-    # But wait, WhisperX does it per VAD segment.
-    
-    # For now, let's keep it simple: Transcribe the whole thing, then align.
+    logger.debug("Running inference (Granite Speech)...")
     text, duration = run_inference(waveform, language=lang)
+    logger.debug("Inference complete. Text length: %d chars", len(text))
     
     if not text:
         return TranscriptionResult(segments=[], audio_duration_s=full_duration)
 
     # 3. Alignment
+    logger.debug("Running forced alignment...")
     word_data = run_alignment(text, waveform)
+    logger.debug("Alignment complete. %d words aligned", len(word_data))
     
     words = []
     for wd in word_data:
@@ -108,7 +109,9 @@ def transcribe(
         )
 
     # 4. Diarization
+    logger.debug("Running diarization...")
     diarize_df = run_diarization(waveform)
+    logger.debug("Diarization complete. %d segments diarized", len(diarize_df))
     
     # 5. Assembly
     segments = [
@@ -121,7 +124,9 @@ def transcribe(
     ]
     
     # Assign speakers to segments and words
+    logger.debug("Assigning speakers...")
     assign_speakers(diarize_df, segments)
+    logger.debug("Speaker assignment complete")
 
     return TranscriptionResult(
         segments=segments,
@@ -149,6 +154,7 @@ def transcribe_stream(
     settings = get_settings()
     lang = language or settings.DEFAULT_LANGUAGE
 
+    logger.debug("Decoding stream audio...")
     if isinstance(audio, (str, Path)):
         waveform = decode_audio_file(str(audio))
     else:
@@ -157,14 +163,18 @@ def transcribe_stream(
     full_duration = len(waveform) / SAMPLE_RATE
 
     # Still use the silence extraction for windowing
+    logger.debug("Extracting transcription window...")
     window_start_s, window_waveform = extract_transcription_window(
         waveform,
         threshold=settings.SILENCE_THRESHOLD_RMS,
         min_silence_s=settings.SILENCE_MIN_DURATION_S,
         frame_duration_s=settings.SILENCE_FRAME_DURATION_S,
     )
+    logger.debug("Window start: %.2fs", window_start_s)
 
+    logger.debug("Running inference on window...")
     text, window_duration = run_inference(window_waveform, language=lang)
+    logger.debug("Inference complete. Text: '%s'", text[:50] + "..." if len(text) > 50 else text)
 
     if not text:
         return TranscriptionResult(
@@ -172,7 +182,9 @@ def transcribe_stream(
         )
 
     # Align only the windowed text
+    logger.debug("Running forced alignment on window...")
     word_data = run_alignment(text, window_waveform)
+    logger.debug("Alignment complete. %d words aligned", len(word_data))
     
     words = []
     for wd in word_data:
@@ -186,7 +198,9 @@ def transcribe_stream(
         )
 
     # Diarize full waveform to get consistent speaker labels
+    logger.debug("Running diarization on full waveform...")
     diarize_df = run_diarization(waveform)
+    logger.debug("Diarization complete. %d segments diarized", len(diarize_df))
 
     segments = [
         Segment(
@@ -198,7 +212,9 @@ def transcribe_stream(
     ]
     
     # Assign speakers
+    logger.debug("Assigning speakers...")
     assign_speakers(diarize_df, segments)
+    logger.debug("Speaker assignment complete")
 
     return TranscriptionResult(
         segments=segments,

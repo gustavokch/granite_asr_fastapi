@@ -164,10 +164,13 @@ def run_inference(
     device = settings.DEVICE
     audio_duration_s = len(waveform) / SAMPLE_RATE
 
+    logger.debug("Acquiring lock for inference...")
     with _lock:
+        logger.debug("Lock acquired for inference. Building prompt...")
         prompt_str = _build_prompt(language)
         wav_tensor = torch.from_numpy(waveform).unsqueeze(0)  # (1, T)
 
+        logger.debug("Running model generate...")
         with torch.inference_mode():
             inputs = _processor(  # type: ignore[misc]
                 prompt_str,
@@ -191,6 +194,7 @@ def run_inference(
             skip_special_tokens=True,
             add_special_tokens=False,
         ).strip()
+        logger.debug("Model generate complete")
 
     return text, audio_duration_s
 
@@ -210,7 +214,9 @@ def run_alignment(text: str, waveform: np.ndarray) -> list:
     settings = get_settings()
     wav_tensor = torch.from_numpy(waveform).unsqueeze(0)  # (1, T)
 
+    logger.debug("Acquiring lock for alignment...")
     with _lock:
+        logger.debug("Lock acquired for alignment. Running align...")
         return align(
             text,
             wav_tensor,
@@ -229,7 +235,9 @@ def run_diarization(waveform: np.ndarray) -> pd.DataFrame:
     if not is_loaded():
         raise RuntimeError("Model not loaded. Call load_model() first.")
 
+    logger.debug("Acquiring lock for diarization...")
     with _lock:
+        logger.debug("Lock acquired for diarization. Running pipeline...")
         return _diarize_pipeline(waveform)  # type: ignore
 
 
@@ -242,5 +250,7 @@ def run_vad(waveform: np.ndarray) -> list:
     if not is_loaded():
         raise RuntimeError("Model not loaded. Call load_model() first.")
 
+    logger.debug("Acquiring lock for VAD...")
     with _lock:
+        logger.debug("Lock acquired for VAD. Running pipeline...")
         return _vad_pipeline(waveform)  # type: ignore
