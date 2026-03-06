@@ -85,10 +85,13 @@ uvicorn granite_asr.server:app --host 0.0.0.0 --port 8010 --workers 1
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Model status, device info |
-| `POST` | `/transcribe` | Batch transcription (full audio) |
-| `POST` | `/transcribe/live` | Cumulative transcription with silence-based window trimming |
+| `POST` | `/transcribe` | Batch transcription (full audio, base64) |
+| `POST` | `/transcribe/upload` | Batch transcription (direct file upload) |
+| `POST` | `/transcribe/live` | Cumulative transcription (base64) |
 
 #### Request format
+
+**Base64 (`/transcribe`, `/transcribe/live`):**
 
 ```json
 {
@@ -96,6 +99,13 @@ uvicorn granite_asr.server:app --host 0.0.0.0 --port 8010 --workers 1
   "language": "pt-BR"
 }
 ```
+
+**File Upload (`/transcribe/upload`):**
+
+- Content-Type: `multipart/form-data`
+- Fields:
+  - `audio`: Audio file (e.g. `.wav`, `.mp3`, `.ogg`)
+  - `language`: `pt-BR` (optional)
 
 #### Response format
 

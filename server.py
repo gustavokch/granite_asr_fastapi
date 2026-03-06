@@ -15,7 +15,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import NamedTuple
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, File, UploadFile, Form
 from pydantic import BaseModel, Field
 
 from .config import get_settings
@@ -292,6 +292,30 @@ async def transcribe(req: TranscribeRequest) -> TranscribeResponse:
     try:
         # Run in thread, run_inference inside will use batch manager
         result = await asyncio.to_thread(_transcribe, audio_bytes, language=req.language)
+    except Exception as exc:
+        logger.exception("Inference failed")
+        raise HTTPException(status_code=500, detail=f"Inference error: {exc}")
+
+    return _build_response(result)
+
+
+@app.post("/transcribe/upload", response_model=TranscribeResponse)
+async def transcribe_upload(
+    audio: UploadFile = File(...), language: str = Form("pt-BR")
+) -> TranscribeResponse:
+    """Transcription via direct file upload (multipart/form-data)."""
+    from . import is_loaded, transcribe as _transcribe
+
+    if not is_loaded():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model not ready",
+        )
+
+    try:
+        audio_bytes = await audio.read()
+        # Run in thread, run_inference inside will use batch manager
+        result = await asyncio.to_thread(_transcribe, audio_bytes, language=language)
     except Exception as exc:
         logger.exception("Inference failed")
         raise HTTPException(status_code=500, detail=f"Inference error: {exc}")
