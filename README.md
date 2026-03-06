@@ -6,6 +6,8 @@ Self-contained Python module for speech transcription using [IBM Granite Speech 
 
 - **Batch transcription** — transcribe complete audio files in a single pass
 - **Live (cumulative) transcription** — poll-based streaming with silence-based context reset to keep inference windows bounded on CPU
+- **Dynamic Batching** — aggregates concurrent requests into efficient batches for higher throughput
+- **Optimized Inference** — supports `torch.compile` for faster execution on modern PyTorch versions
 - **Speaker Diarization** — separates speakers using `pyannote/speaker-diarization-3.1`
 - **Forced Alignment** — generates word-level timestamps using `wav2vec2`
 - **VAD (Voice Activity Detection)** — filters non-speech regions using `silero-vad`
@@ -191,9 +193,17 @@ All settings use Pydantic `BaseSettings` with the `GRANITE_` environment variabl
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `GRANITE_MAX_NEW_TOKENS` | `512` | Maximum tokens generated per transcription |
+| `GRANITE_MAX_NEW_TOKENS` | `2048` | Maximum tokens generated per transcription |
 | `GRANITE_DEFAULT_LANGUAGE` | `pt-BR` | Default language when not specified by caller |
 | `GRANITE_SYSTEM_PROMPT` | _(Portuguese medical assistant)_ | System prompt for the chat template |
+
+### Optimization settings
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `GRANITE_USE_COMPILE` | `false` | Enable `torch.compile` (requires PyTorch 2.0+) |
+| `GRANITE_BATCH_SIZE` | `1` | Max requests to batch together |
+| `GRANITE_BATCH_TIMEOUT` | `0.1` | Max wait time (seconds) to fill a batch |
 
 ### Silence detection settings
 
@@ -259,12 +269,10 @@ granite_asr/
 
 ### Thread safety
 
-The module uses two layers of serialization:
+The module uses a tiered concurrency model:
 
-1. **`threading.Lock`** in `model.py` — serializes all PyTorch processor/model access. The entire inference pipeline (prompt building, tokenization, `model.generate()`, decoding) runs inside the lock.
-2. **`asyncio.Lock`** in `server.py` — prevents the FastAPI event loop from dispatching concurrent `asyncio.to_thread()` inference calls.
-
-`load_model()` uses double-checked locking: it checks if the model is already loaded before acquiring the lock, then checks again inside the lock to prevent double initialization.
+1. **`threading.Lock`** in `model.py` — serializes all PyTorch access. All inference (including batch inference) runs inside this lock to ensure thread safety for the underlying model.
+2. **`BatchManager`** in `server.py` — replaces the global request lock. Concurrent requests are collected into an `asyncio.Queue`, grouped into batches (up to `GRANITE_BATCH_SIZE`), and dispatched to the model as a single operation.
 
 ### Lazy imports
 
@@ -324,6 +332,5 @@ Test coverage:
 
 - **No confidence scores** — the `confidence` field is always `None`.
 - **Greedy decoding** — uses `do_sample=False, num_beams=1` for deterministic, fast output.
-- **Max 512 tokens** — very long audio segments may produce truncated transcriptions.
-- **Single-threaded inference** — only one transcription runs at a time. Concurrent requests are queued.
+- **Batched Inference** — requests are serialized and batched; concurrent throughput is high, but single-request latency includes batch accumulation time (`GRANITE_BATCH_TIMEOUT`).
 - **Polling latency** — live transcription has a minimum latency of `GRANITE_POLL_INTERVAL_S` (default 3s), unlike WebSocket-based providers that stream results in real time.

@@ -52,6 +52,22 @@ class DiarizationPipeline:
             max_speakers=max_speakers,
         )
 
+        # DEBUG: Inspect output type if itertracks is missing
+        if not hasattr(diarization, "itertracks"):
+            import logging
+            logger = logging.getLogger("granite_asr.diarization")
+            logger.error(
+                "Diarization output is not an Annotation (got %s). Attributes: %s", 
+                type(diarization).__name__, 
+                dir(diarization)
+            )
+            # Try to handle known alternative types if any (e.g. wrapper objects)
+            # For now, just log and raise to allow diagnosis
+            raise AttributeError(
+                f"Diarization object {type(diarization).__name__} has no attribute 'itertracks'. "
+                f"Dir: {dir(diarization)}"
+            )
+
         # Convert to DataFrame
         segments = []
         for segment, _, speaker in diarization.itertracks(yield_label=True):

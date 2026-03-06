@@ -78,6 +78,16 @@ def load_model() -> None:
                 **kwargs,
             )
             _model.train(False)
+            
+            # Optimization: torch.compile
+            if settings.USE_COMPILE:
+                if hasattr(torch, "compile"):
+                    logger.info("Compiling model with torch.compile (mode='reduce-overhead')...")
+                    # 'reduce-overhead' is good for small batches/CPU inference
+                    _model = torch.compile(_model, mode="reduce-overhead")
+                else:
+                    logger.warning("torch.compile not available in this PyTorch version")
+
             logger.info("Granite Speech model loaded successfully")
 
         # Load Alignment model
@@ -203,6 +213,13 @@ def run_inference(
 
         num_input_tokens = inputs["input_ids"].shape[-1]
         new_token_ids = output_ids[0, num_input_tokens:]
+
+        if len(new_token_ids) >= settings.MAX_NEW_TOKENS:
+            logger.warning(
+                "Generation reached MAX_NEW_TOKENS (%d). Transcription may be truncated.",
+                settings.MAX_NEW_TOKENS,
+            )
+
         text = _processor.tokenizer.decode(  # type: ignore[union-attr]
             new_token_ids,
             skip_special_tokens=True,
@@ -210,6 +227,97 @@ def run_inference(
         ).strip()
     
     return text, audio_duration_s
+
+
+def run_batch_inference(
+    waveforms: list[np.ndarray],
+    languages: list[str] | str = "pt-BR",
+) -> list[tuple[str, float]]:
+    """Run Granite Speech inference on a batch of waveforms.
+
+    Args:
+        waveforms: List of mono float32 numpy arrays at 16kHz.
+        languages: List of BCP-47 language tags (one per waveform) or single tag.
+
+    Returns:
+        List of (transcribed_text, audio_duration_s) tuples.
+    """
+    if not is_loaded():
+        raise RuntimeError("Model not loaded. Call load_model() first.")
+    
+    if not waveforms:
+        return []
+
+    settings = get_settings()
+    device = settings.DEVICE
+    durations = [len(w) / SAMPLE_RATE for w in waveforms]
+    
+    # Handle languages
+    if isinstance(languages, str):
+        langs = [languages] * len(waveforms)
+    else:
+        if len(languages) != len(waveforms):
+            raise ValueError("Length of languages must match waveforms")
+        langs = languages
+
+    # Ensure float32
+    waveforms_f32 = [
+        w.astype(np.float32) if w.dtype != np.float32 else w
+        for w in waveforms
+    ]
+
+    logger.debug("Acquiring lock for batch inference...")
+    with _lock:
+        logger.debug("Lock acquired for batch inference. Building prompts...")
+        
+        # Build individual prompts
+        prompts = [_build_prompt(l) for l in langs]
+        
+        start_time = time.time()
+        logger.debug("Processing batch of %d waveforms...", len(waveforms))
+        
+        with torch.inference_mode():
+            # Processor call for batch
+            inputs = _processor(
+                text=prompts,
+                audio=waveforms_f32,
+                device=device,
+                return_tensors="pt",
+                padding=True, # Pad audio to longest in batch
+            )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            logger.debug("Running model generate (batch)...")
+            output_ids = _model.generate(
+                **inputs,
+                max_new_tokens=settings.MAX_NEW_TOKENS,
+                do_sample=False,
+                num_beams=1,
+            )
+        
+        gen_time = time.time() - start_time
+        logger.debug("Batch generation complete in %.2fs", gen_time)
+
+        # Decode batch
+        num_input_tokens = inputs["input_ids"].shape[-1]
+        new_token_ids = output_ids[:, num_input_tokens:]
+
+        if new_token_ids.shape[-1] >= settings.MAX_NEW_TOKENS:
+            logger.warning(
+                "Batch generation reached MAX_NEW_TOKENS (%d). Transcription may be truncated.",
+                settings.MAX_NEW_TOKENS,
+            )
+        
+        texts = _processor.tokenizer.batch_decode(
+            new_token_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+        
+        # Strip texts
+        texts = [t.strip() for t in texts]
+
+    return list(zip(texts, durations))
 
 
 def run_alignment(text: str, waveform: np.ndarray) -> list:

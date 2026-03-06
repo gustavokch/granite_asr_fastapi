@@ -20,12 +20,17 @@ class GraniteSettings(BaseSettings):
     HF_TOKEN: str | None = None
 
     # Inference
-    MAX_NEW_TOKENS: int = 512
+    MAX_NEW_TOKENS: int = 2048
     DEFAULT_LANGUAGE: str = "pt-BR"
     SYSTEM_PROMPT: str = (
         "Você é o Granite, desenvolvido pela IBM. "
         "Você é um assistente de transcrição de áudio médico preciso."
     )
+    
+    # Optimization
+    USE_COMPILE: bool = False  # Enable torch.compile (requires PyTorch 2.0+)
+    BATCH_SIZE: int = 1        # Max batch size for dynamic batching
+    BATCH_TIMEOUT: float = 0.1 # Max wait time for batch accumulation (seconds)
 
     # Silence detection
     SILENCE_THRESHOLD_RMS: float = 0.01

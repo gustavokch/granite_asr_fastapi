@@ -11,7 +11,9 @@ Run with:
 import asyncio
 import base64
 import logging
+import time
 from contextlib import asynccontextmanager
+from typing import NamedTuple
 
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
@@ -20,8 +22,109 @@ from .config import get_settings
 
 logger = logging.getLogger("granite_asr.server")
 
-# Serialise inference — PyTorch models are not re-entrant across threads
-_inference_lock = asyncio.Lock()
+# Global batch manager
+_batch_manager = None
+
+# ---------------------------------------------------------------------------
+# Batching Logic
+# ---------------------------------------------------------------------------
+
+class BatchRequest(NamedTuple):
+    waveform: object # numpy array
+    language: str
+    future: asyncio.Future
+
+
+class BatchManager:
+    def __init__(self, batch_size: int, timeout: float):
+        self.batch_size = batch_size
+        self.timeout = timeout
+        self.queue = asyncio.Queue()
+        self.loop = asyncio.get_running_loop()
+        self._task = None
+
+    def start(self):
+        self._task = asyncio.create_task(self._process_batches())
+
+    async def stop(self):
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    async def submit(self, waveform, language: str):
+        future = self.loop.create_future()
+        await self.queue.put(BatchRequest(waveform, language, future))
+        return await future
+
+    async def _process_batches(self):
+        from .model import run_batch_inference
+        
+        while True:
+            batch: list[BatchRequest] = []
+            try:
+                # Wait for first item
+                item = await self.queue.get()
+                batch.append(item)
+                
+                # Collect more items with timeout
+                deadline = time.time() + self.timeout
+                while len(batch) < self.batch_size:
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        item = await asyncio.wait_for(self.queue.get(), timeout=remaining)
+                        batch.append(item)
+                    except asyncio.TimeoutError:
+                        break
+                
+                if not batch:
+                    continue
+
+                # Prepare batch
+                waveforms = [req.waveform for req in batch]
+                languages = [req.language for req in batch]
+                
+                # Run inference
+                try:
+                    # Run in thread pool to avoid blocking event loop
+                    results = await asyncio.to_thread(
+                        run_batch_inference, waveforms, languages=languages
+                    )
+                    
+                    # Resolve futures
+                    for req, result in zip(batch, results):
+                        if not req.future.done():
+                            req.future.set_result(result)
+                            
+                except Exception as e:
+                    logger.exception("Batch inference failed")
+                    for req in batch:
+                        if not req.future.done():
+                            req.future.set_exception(e)
+                            
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Error in batch loop: %s", e)
+                await asyncio.sleep(0.1) # Backoff
+
+
+def run_inference_proxied(waveform, language="pt-BR"):
+    """Thread-safe proxy for run_inference that submits to the batch manager."""
+    if _batch_manager is None:
+        raise RuntimeError("Batch manager not initialized")
+        
+    # Submit to batch manager running in main loop
+    future = asyncio.run_coroutine_threadsafe(
+        _batch_manager.submit(waveform, language), 
+        _batch_manager.loop
+    )
+    return future.result()
+
 
 # ---------------------------------------------------------------------------
 # Request / response schemas
@@ -116,12 +219,35 @@ def _decode_b64_audio(audio_b64: str) -> bytes:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the Granite model on startup."""
+    global _batch_manager
     from . import load_model
+    import granite_asr.model
 
     logger.info("Startup: loading Granite Speech model")
     await asyncio.to_thread(load_model)
+    
+    # Initialize batch manager
+    settings = get_settings()
+    _batch_manager = BatchManager(
+        batch_size=settings.BATCH_SIZE,
+        timeout=settings.BATCH_TIMEOUT
+    )
+    _batch_manager.start()
+    logger.info("Batch manager started (size=%d, timeout=%.2fs)", 
+                settings.BATCH_SIZE, settings.BATCH_TIMEOUT)
+    
+    # Monkey-patch run_inference to use batch manager
+    # This allows existing sync code (transcribe, transcribe_stream) to transparently batch
+    original_run_inference = granite_asr.model.run_inference
+    granite_asr.model.run_inference = run_inference_proxied
+    
     logger.info("Model ready")
     yield
+    
+    # Cleanup
+    if _batch_manager:
+        await _batch_manager.stop()
+    granite_asr.model.run_inference = original_run_inference
 
 
 app = FastAPI(
@@ -164,8 +290,8 @@ async def transcribe(req: TranscribeRequest) -> TranscribeResponse:
     audio_bytes = _decode_b64_audio(req.audio_b64)
 
     try:
-        async with _inference_lock:
-            result = await asyncio.to_thread(_transcribe, audio_bytes, language=req.language)
+        # Run in thread, run_inference inside will use batch manager
+        result = await asyncio.to_thread(_transcribe, audio_bytes, language=req.language)
     except Exception as exc:
         logger.exception("Inference failed")
         raise HTTPException(status_code=500, detail=f"Inference error: {exc}")
@@ -187,10 +313,10 @@ async def transcribe_live(req: TranscribeRequest) -> TranscribeResponse:
     audio_bytes = _decode_b64_audio(req.audio_b64)
 
     try:
-        async with _inference_lock:
-            result = await asyncio.to_thread(
-                transcribe_stream, audio_bytes, language=req.language
-            )
+        # Run in thread, run_inference inside will use batch manager
+        result = await asyncio.to_thread(
+            transcribe_stream, audio_bytes, language=req.language
+        )
     except Exception as exc:
         logger.exception("Inference failed")
         raise HTTPException(status_code=500, detail=f"Inference error: {exc}")
