@@ -47,7 +47,7 @@ def load_model() -> None:
                 "bfloat16": torch.bfloat16,
                 "float32": torch.float32,
             }
-            torch_dtype = dtype_map.get(settings.TORCH_DTYPE, torch.float16)
+            dtype = dtype_map.get(settings.TORCH_DTYPE, torch.float16)
 
             logger.info(
                 "Loading Granite Speech model: %s (device=%s, dtype=%s)",
@@ -64,7 +64,7 @@ def load_model() -> None:
             _model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 settings.MODEL_ID,
                 device_map=settings.DEVICE,
-                torch_dtype=torch_dtype,
+                dtype=dtype,
                 **kwargs,
             )
             _model.train(False)
