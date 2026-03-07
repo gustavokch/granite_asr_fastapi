@@ -2,6 +2,7 @@
 Ported and simplified from WhisperX (C. Max Bain).
 """
 
+import logging
 from typing import Optional, Union
 
 import numpy as np
@@ -10,6 +11,8 @@ import torch
 from pyannote.audio import Pipeline
 
 SAMPLE_RATE = 16000
+
+logger = logging.getLogger("granite_asr.diarization")
 
 
 class DiarizationPipeline:
@@ -56,13 +59,10 @@ class DiarizationPipeline:
         annotation = diarization
         if hasattr(diarization, "speaker_diarization"):
             annotation = diarization.speaker_diarization
-            logger = logging.getLogger("granite_asr.diarization")
             logger.debug("Extracted speaker_diarization from DiarizeOutput wrapper")
 
         # DEBUG: Inspect output type if itertracks is missing
         if not hasattr(annotation, "itertracks"):
-            import logging
-            logger = logging.getLogger("granite_asr.diarization")
             logger.error(
                 "Diarization output is not an Annotation (got %s). Attributes: %s", 
                 type(annotation).__name__, 
