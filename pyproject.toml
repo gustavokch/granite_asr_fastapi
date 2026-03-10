@@ -1,2 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "granite-asr"
+version = "0.1.0"
+description = "Granite Speech 3.3 2B ASR microservice with diarization, VAD, and forced alignment"
+requires-python = ">=3.10"
+# PyTorch is NOT listed here — it is environment-specific (CPU vs CUDA).
+# Install it separately before installing this package:
+#   CPU:  pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#   CUDA: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+dependencies = [
+    "transformers>=4.52.4",
+    "peft>=0.11.0",
+    "soundfile>=0.12.1",
+    "numpy>=1.26.0",
+    "pydantic-settings>=2.3.0",
+    "pandas>=2.1.0",
+    "nltk>=3.8.1",
+    "pyannote-audio>=3.1.1",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.9",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+granite-asr = "granite_asr.run:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["granite_asr*"]
+
 [tool.pytest.ini_options]
 markers = ["slow: tests requiring model loading (~6GB RAM, 30-60s startup)"]

@@ -272,7 +272,7 @@ def health() -> HealthResponse:
         status="ok" if loaded else "loading",
         model_loaded=loaded,
         model_id=settings.MODEL_ID,
-        device=settings.DEVICE,
+        device=settings.resolved_device,
     )
 
 

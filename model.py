@@ -42,7 +42,7 @@ def load_model() -> None:
         settings = get_settings()
 
         # Optimize CPU threads if applicable
-        if settings.DEVICE == "cpu":
+        if settings.resolved_device == "cpu":
             import os
             # Use around half of available cores for PyTorch to avoid contention
             cores = os.cpu_count() or 4
@@ -57,13 +57,14 @@ def load_model() -> None:
                 "bfloat16": torch.bfloat16,
                 "float32": torch.float32,
             }
-            dtype = dtype_map.get(settings.TORCH_DTYPE, torch.float16)
+            dtype = dtype_map.get(settings.resolved_dtype, torch.float32)
+            device = settings.resolved_device
 
             logger.info(
                 "Loading Granite Speech model: %s (device=%s, dtype=%s)",
                 settings.MODEL_ID,
-                settings.DEVICE,
-                settings.TORCH_DTYPE,
+                device,
+                settings.resolved_dtype,
             )
 
             kwargs = {}
@@ -73,7 +74,7 @@ def load_model() -> None:
             _processor = AutoProcessor.from_pretrained(settings.MODEL_ID, **kwargs)
             _model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 settings.MODEL_ID,
-                device_map=settings.DEVICE,
+                device_map=device,
                 dtype=dtype,
                 **kwargs,
             )
@@ -96,7 +97,7 @@ def load_model() -> None:
 
             logger.info("Loading alignment model: %s", settings.ALIGN_MODEL_ID)
             _align_model, _align_dictionary = _load_align(
-                settings.ALIGN_MODEL_ID, settings.DEVICE
+                settings.ALIGN_MODEL_ID, settings.resolved_device
             )
             logger.info("Alignment model loaded successfully")
 
@@ -108,7 +109,7 @@ def load_model() -> None:
             _diarize_pipeline = DiarizationPipeline(
                 settings.DIARIZATION_MODEL_ID,
                 token=settings.HF_TOKEN,
-                device=settings.DEVICE,
+                device=settings.resolved_device,
             )
             logger.info("Diarization model loaded successfully")
 
@@ -117,7 +118,7 @@ def load_model() -> None:
             from .vad import VADPipeline
 
             logger.info("Loading VAD model (Silero)")
-            _vad_pipeline = VADPipeline(device=settings.DEVICE)
+            _vad_pipeline = VADPipeline(device=settings.resolved_device)
             logger.info("VAD model loaded successfully")
 
 
@@ -181,7 +182,7 @@ def run_inference(
         waveform = waveform.astype(np.float32)
 
     settings = get_settings()
-    device = settings.DEVICE
+    device = settings.resolved_device
     audio_duration_s = len(waveform) / SAMPLE_RATE
 
     logger.debug("Acquiring lock for inference...")
@@ -249,7 +250,7 @@ def run_batch_inference(
         return []
 
     settings = get_settings()
-    device = settings.DEVICE
+    device = settings.resolved_device
     durations = [len(w) / SAMPLE_RATE for w in waveforms]
     
     # Handle languages
@@ -343,7 +344,7 @@ def run_alignment(text: str, waveform: np.ndarray) -> list:
             wav_tensor,
             _align_model,  # type: ignore
             _align_dictionary,  # type: ignore
-            settings.DEVICE,
+            settings.resolved_device,
         )
 
 
