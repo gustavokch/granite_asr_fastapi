@@ -1,6 +1,6 @@
 # granite_asr
 
-Self-contained Python module for speech transcription using [IBM Granite Speech 3.3 2B](https://huggingface.co/ibm-granite/granite-speech-3.3-2b), a 3B-parameter speech-language model. Designed for CPU inference with optional GPU acceleration. Includes a FastAPI microservice wrapper for network access.
+Self-contained Python module for speech transcription using [IBM Granite Speech 3.3 2B](https://huggingface.co/ibm-granite/granite-speech-3.3-2b), a 2B-parameter speech-language model. Designed for CPU inference with optional GPU acceleration. Includes a FastAPI microservice wrapper for network access.
 
 ## Features
 
